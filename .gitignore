@@ -1,4 +1,5 @@
 /results
 /moving_mnist
-UCF50.rar
-mnist_test_seq.npy
+/datasets
+/results_vorticity
+/flow_dataset

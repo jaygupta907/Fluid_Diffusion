@@ -16,7 +16,7 @@ diffusion = GaussianDiffusion(
 
 trainer = Trainer(
     diffusion,
-    './moving_mnist',                         # this folder path needs to contain all your training data, as .gif files, of correct image size and number of frames
+    './flow_dataset',                      
     train_batch_size = 8,
     train_lr = 1e-4,
     save_and_sample_every = 1000,
@@ -24,7 +24,8 @@ trainer = Trainer(
     gradient_accumulate_every = 2,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                       # turn on mixed precision
-    num_sample_rows=2                    
+    results_folder = './results_vorticity',               
+    num_sample_rows=2   
 )
 
 trainer.train()
