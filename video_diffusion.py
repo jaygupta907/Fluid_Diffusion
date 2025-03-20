@@ -1,5 +1,28 @@
-import torch
 from video_diffusion_pytorch import Unet3D, GaussianDiffusion, Trainer
+import argparse  
+import wandb
+
+def get_args():
+    parser = argparse.ArgumentParser(description='Multilayer Feedforward Neural Network')
+
+    parser.add_argument('--wandb_project', type=str, default='video_diffusion', help='WandB project name')
+    parser.add_argument('--wandb_entity', type=str, default='jay_gupta-indian-institute-of-technology-madras', help='WandB entity name')
+    parser.add_argument('--dataset', type=str, default='vorticity over cylinder', help='dataset name')
+
+
+    return parser.parse_args()
+
+
+
+args = get_args()
+
+
+wandb.init(project=args.wandb_project,
+            entity=args.wandb_entity,
+            config=args,
+            name=f"opt_{args.dataset}")
+
+
 
 model = Unet3D(
     dim = 64,
