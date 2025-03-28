@@ -7,7 +7,8 @@ import os
 tensor = torch.load('vorticity.pt')['vorticity']
 mask = torch.load('vorticity.pt')['mask']
 
-
+print(f"Tensor Shape is : {tensor.shape}")
+print(f"Mask Shape is : {mask.shape}")
 # Convert to NumPy and remove the last dimension
 tensor = tensor.numpy().squeeze(-1) 
 mask = mask.numpy().squeeze(-1) 
@@ -16,7 +17,7 @@ print(f"Tensor Shape is : {tensor.shape}")
 print(f"Mask Shape is : {mask.shape}")
 
 # Parameters
-num_frames = 20  
+num_frames = 10 
 stride = 1
 save_dir = "flow_dataset"
 mask_dir = "mask_dataset"

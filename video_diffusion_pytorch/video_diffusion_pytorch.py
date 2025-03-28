@@ -355,7 +355,7 @@ class Unet3D(nn.Module):
         cond_dim = None,
         out_dim = None,
         dim_mults=(1, 2, 4, 8),
-        channels = 3,
+        channels = 1,
         attn_heads = 8,
         attn_dim_head = 32,
         use_bert_text_cond = False,
@@ -559,10 +559,10 @@ class GaussianDiffusion(nn.Module):
         image_size,
         num_frames,
         text_use_bert_cls = False,
-        channels = 3,
+        channels = 1,
         timesteps = 1000,
         loss_type = 'l1',
-        use_dynamic_thres = False, # from the Imagen paper
+        use_dynamic_thres = False,
         dynamic_thres_percentile = 0.9
     ):
         super().__init__()
@@ -663,28 +663,32 @@ class GaussianDiffusion(nn.Module):
         return model_mean, posterior_variance, posterior_log_variance
 
     @torch.inference_mode()
-    def p_sample(self, x, t, cond = None, cond_scale = 1., clip_denoised = True):
+    def p_sample(self, x, t, mask, cond = None, cond_scale = 1., clip_denoised = True):
         b, *_, device = *x.shape, x.device
         model_mean, _, model_log_variance = self.p_mean_variance(x = x, t = t, clip_denoised = clip_denoised, cond = cond, cond_scale = cond_scale)
         noise = torch.randn_like(x)
         # no noise when t == 0
+
         nonzero_mask = (1 - (t == 0).float()).reshape(b, *((1,) * (len(x.shape) - 1)))
-        return model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+        output = model_mean + nonzero_mask * (0.5 * model_log_variance).exp() * noise
+        return output
 
     @torch.inference_mode()
-    def p_sample_loop(self, shape, cond = None, cond_scale = 1.):
+    def p_sample_loop(self, shape, mask, cond = None, cond_scale = 1.):
         device = self.betas.device
 
         b = shape[0]
         img = torch.randn(shape, device=device)
-
+        mask = 1.0-mask
         for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
-            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), cond = cond, cond_scale = cond_scale)
-
-        return unnormalize_img(img)
+            img = self.p_sample(img, torch.full((b,), i, device=device, dtype=torch.long), mask, cond = cond, cond_scale = cond_scale)
+        img = unnormalize_img(img)
+        print(f'img shape = {img.shape}')
+        print(f"mask shape = {mask.shape}")
+        return img * mask
 
     @torch.inference_mode()
-    def sample(self, cond = None, cond_scale = 1., batch_size = 16):
+    def sample(self, mask, cond = None, cond_scale = 1., batch_size = 16):
         device = next(self.denoise_fn.parameters()).device
 
         if is_list_str(cond):
@@ -694,7 +698,7 @@ class GaussianDiffusion(nn.Module):
         image_size = self.image_size
         channels = self.channels
         num_frames = self.num_frames
-        return self.p_sample_loop((batch_size, channels, num_frames, image_size, image_size), cond = cond, cond_scale = cond_scale)
+        return self.p_sample_loop((batch_size, channels, num_frames, image_size, image_size), mask, cond = cond, cond_scale = cond_scale)
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t = None, lam = 0.5):
@@ -747,7 +751,6 @@ class GaussianDiffusion(nn.Module):
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
         x = normalize_img(x)
         return self.p_losses(x, t, *args, **kwargs)
-
 # trainer class
 
 CHANNELS_TO_MODE = {
@@ -756,7 +759,7 @@ CHANNELS_TO_MODE = {
     4 : 'RGBA'
 }
 
-def seek_all_images(img, channels = 3):
+def seek_all_images(img, channels = 1):
     assert channels in CHANNELS_TO_MODE, f'channels {channels} invalid'
     mode = CHANNELS_TO_MODE[channels]
 
@@ -779,7 +782,7 @@ def video_tensor_to_gif(tensor, path, duration = 120, loop = 0, optimize = True)
 
 # gif -> (channels, frame, height, width) tensor
 
-def gif_to_tensor(path, channels = 3, transform = T.ToTensor()):
+def gif_to_tensor(path, channels = 1, transform = T.ToTensor()):
     img = Image.open(path)
     tensors = tuple(map(transform, seek_all_images(img, channels = channels)))
     return torch.stack(tensors, dim = 1)
@@ -808,18 +811,21 @@ class Dataset(data.Dataset):
     def __init__(
         self,
         folder,
+        mask_folder,
         image_size,
-        channels = 3,
-        num_frames = 16,
+        channels = 1,
+        num_frames = 10,
         horizontal_flip = False,
         force_num_frames = True,
         exts = ['gif']
     ):
         super().__init__()
         self.folder = folder
+        self.mask_folder = mask_folder
         self.image_size = image_size
         self.channels = channels
         self.paths = [p for ext in exts for p in Path(f'{folder}').glob(f'**/*.{ext}')]
+        self.mask_paths = [p for ext in exts for p in Path(f'{mask_folder}').glob(f'**/*.{ext}')]
 
         self.cast_num_frames_fn = partial(cast_num_frames, frames = num_frames) if force_num_frames else identity
 
@@ -835,19 +841,20 @@ class Dataset(data.Dataset):
 
     def __getitem__(self, index):
         path = self.paths[index]
+        mask_path = self.mask_paths[index]
         tensor = gif_to_tensor(path, self.channels, transform = self.transform)
-        return self.cast_num_frames_fn(tensor)
-
-# trainer class
+        mask_tensor = gif_to_tensor(mask_path, self.channels, transform = self.transform)
+        return self.cast_num_frames_fn(tensor), self.cast_num_frames_fn(mask_tensor)
 
 class Trainer(object):
     def __init__(
         self,
         diffusion_model,
         folder,
+        mask_folder,
         *,
         ema_decay = 0.995,
-        num_frames = 16,
+        num_frames = 10,
         train_batch_size = 32,
         train_lr = 1e-4,
         train_num_steps = 100000,
@@ -878,7 +885,7 @@ class Trainer(object):
         channels = diffusion_model.channels
         num_frames = diffusion_model.num_frames
 
-        self.ds = Dataset(folder, image_size, channels = channels, num_frames = num_frames)
+        self.ds = Dataset(folder, mask_folder, image_size, channels = channels, num_frames = num_frames)
 
         print(f'found {len(self.ds)} videos as gif files at {folder}')
         assert len(self.ds) > 0, 'need to have at least 1 video to start training (although 1 is not great, try 100k)'
@@ -939,7 +946,8 @@ class Trainer(object):
 
         while self.step < self.train_num_steps:
             for i in range(self.gradient_accumulate_every):
-                data = next(self.dl).cuda()
+                data, mask = next(self.dl)
+                data, mask = data.cuda(), mask.cuda()
 
                 with autocast(enabled = self.amp):
                     loss = self.model(
@@ -951,7 +959,7 @@ class Trainer(object):
                     self.scaler.scale(loss / self.gradient_accumulate_every).backward()
 
             print(f'Loss at timestep {self.step} is {loss.item()}')
-            wandb.log({"step": self.step, "Loss": loss.item()})
+            # wandb.log({"step": self.step, "Loss": loss.item()})
 
             log = {'loss': loss.item()}
 
@@ -971,7 +979,7 @@ class Trainer(object):
                 num_samples = self.num_sample_rows ** 2
                 batches = num_to_groups(num_samples, self.batch_size)
 
-                all_videos_list = list(map(lambda n: self.ema_model.sample(batch_size=n), batches))
+                all_videos_list = list(map(lambda n: self.ema_model.sample(mask, batch_size=n), batches))
                 all_videos_list = torch.cat(all_videos_list, dim = 0)
 
                 all_videos_list = F.pad(all_videos_list, (2, 2, 2, 2))

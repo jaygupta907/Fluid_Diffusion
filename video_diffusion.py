@@ -17,10 +17,10 @@ def get_args():
 args = get_args()
 
 
-wandb.init(project=args.wandb_project,
-            entity=args.wandb_entity,
-            config=args,
-            name=f"opt_{args.dataset}")
+# wandb.init(project=args.wandb_project,
+#             entity=args.wandb_entity,
+#             config=args,
+#             name=f"conditional_vorticity_experiment_1")
 
 
 
@@ -39,16 +39,17 @@ diffusion = GaussianDiffusion(
 
 trainer = Trainer(
     diffusion,
-    './flow_dataset',                      
-    train_batch_size = 8,
+    './flow_dataset', 
+    './mask_dataset',                     
+    train_batch_size =4,
     train_lr = 1e-4,
-    save_and_sample_every = 1000,
+    save_and_sample_every = 100,
     train_num_steps = 700000,         # total training steps
     gradient_accumulate_every = 2,    # gradient accumulation steps
     ema_decay = 0.995,                # exponential moving average decay
     amp = True,                       # turn on mixed precision
-    results_folder = './results_vorticity',               
-    num_sample_rows=2   
+    results_folder = './results_vorticity_conditioned',               
+    num_sample_rows=2  
 )
 
 trainer.train()
