@@ -2,5 +2,6 @@
 /moving_mnist
 /datasets
 /results_vorticity
+/results_vorticity_conditioned
 /flow_dataset
 /mask_dataset
